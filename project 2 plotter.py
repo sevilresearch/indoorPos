@@ -1,4 +1,5 @@
 import os
+import re
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -7,14 +8,23 @@ import matplotlib.pyplot as plt
 # ============================================================
 # SET YOUR CSV FILE PATH HERE
 # ============================================================
-csv_file = r"C:\Users\ISR-Lab\Carroll\Project 2 runs\crazyflie_square_size1p00m_time37p81s_20260326_120007.csv"
+csv_file = r"C:\Users\ISR-Lab\Carroll\Project 2 runs\crazyflie_triangle_size1p50m_time32p67s_20260326_120329.csv"
+
+
+def sanitize_filename(name):
+    """
+    Make a safe Windows filename from the plot title.
+    """
+    name = name.strip()
+    name = re.sub(r'[<>:"/\\|?*]', '_', name)
+    name = re.sub(r'\s+', '_', name)
+    return name
 
 
 def compute_3d_error(df):
     """
-    Computes 3D distance between Lighthouse and OptiTrack/MoCap points.
-    If path_error_3d_m already exists, it uses that column.
-    Otherwise it computes it from position columns.
+    Computes 3D distance between Lighthouse and MoCap points.
+    Uses path_error_3d_m if already present, otherwise computes it.
     """
     required_cols = ["lh_x_m", "lh_y_m", "lh_z_m", "ot_x_m", "ot_y_m", "ot_z_m"]
 
@@ -47,25 +57,18 @@ def load_and_clean_data(csv_path):
         if col not in df.columns:
             raise ValueError(f"CSV is missing required column: {col}")
 
-    # Convert to numeric in case some rows have text or blanks
     for col in needed:
         df[col] = pd.to_numeric(df[col], errors="coerce")
 
-    # Optional tracked flag handling
     if "ot_tracked_flag" in df.columns:
         df["ot_tracked_flag"] = pd.to_numeric(df["ot_tracked_flag"], errors="coerce")
 
-    # Keep only rows with valid coordinates from both systems
     df = df.dropna(subset=needed).copy()
 
-    # If OptiTrack tracked flag exists, only keep tracked rows
     if "ot_tracked_flag" in df.columns:
         df = df[df["ot_tracked_flag"] == 1].copy()
 
-    # Compute or load 3D error
     df["computed_error_3d_m"] = compute_3d_error(df)
-
-    # Drop rows where error could not be computed
     df = df.dropna(subset=["computed_error_3d_m"]).copy()
 
     if len(df) == 0:
@@ -87,7 +90,7 @@ def calculate_error_stats(error_series):
 
 def set_equal_axes_3d(ax, x1, y1, z1, x2, y2, z2):
     """
-    Makes 3D axes use the same scale so the shape is not distorted.
+    Makes 3D axes use equal scale.
     """
     xs = np.concatenate([np.asarray(x1), np.asarray(x2)])
     ys = np.concatenate([np.asarray(y1), np.asarray(y2)])
@@ -103,7 +106,6 @@ def set_equal_axes_3d(ax, x1, y1, z1, x2, y2, z2):
         zs.max() - zs.min()
     ) / 2
 
-    # Add a small pad so data does not touch edges
     pad = max(0.05, max_range * 0.05)
     max_range += pad
 
@@ -112,9 +114,9 @@ def set_equal_axes_3d(ax, x1, y1, z1, x2, y2, z2):
     ax.set_zlim(z_mid - max_range, z_mid + max_range)
 
 
-def plot_flight_paths(df, show_connector_lines=True, connector_step=50):
+def plot_flight_paths(df, plot_title, show_connector_lines=True, connector_step=50):
     """
-    Plots Lighthouse and MoCap paths in 3D and overlays error statistics.
+    Plots Lighthouse and MoCap paths in 3D and saves image using the plot title.
     """
     lh_x = df["lh_x_m"].to_numpy()
     lh_y = df["lh_y_m"].to_numpy()
@@ -130,18 +132,15 @@ def plot_flight_paths(df, show_connector_lines=True, connector_step=50):
     fig = plt.figure(figsize=(12, 9))
     ax = fig.add_subplot(111, projection="3d")
 
-    # Main flight paths
     ax.plot(lh_x, lh_y, lh_z, linewidth=2.5, label="Lighthouse Path")
     ax.plot(ot_x, ot_y, ot_z, linewidth=2.5, label="MoCap / OptiTrack Path")
 
-    # Start and end markers
     ax.scatter(lh_x[0], lh_y[0], lh_z[0], s=60, marker="o", label="Lighthouse Start")
     ax.scatter(ot_x[0], ot_y[0], ot_z[0], s=60, marker="o", label="MoCap Start")
 
     ax.scatter(lh_x[-1], lh_y[-1], lh_z[-1], s=80, marker="x", label="Lighthouse End")
     ax.scatter(ot_x[-1], ot_y[-1], ot_z[-1], s=80, marker="x", label="MoCap End")
 
-    # Connector lines between matching samples to visualize point error
     if show_connector_lines:
         for i in range(0, len(df), connector_step):
             ax.plot(
@@ -152,7 +151,7 @@ def plot_flight_paths(df, show_connector_lines=True, connector_step=50):
                 alpha=0.35
             )
 
-    ax.set_title("3D Flight Path Comparison: Lighthouse vs MoCap", fontsize=14, pad=20)
+    ax.set_title(plot_title, fontsize=14, pad=20)
     ax.set_xlabel("X Position (m)")
     ax.set_ylabel("Y Position (m)")
     ax.set_zlabel("Z Position (m)")
@@ -179,13 +178,28 @@ def plot_flight_paths(df, show_connector_lines=True, connector_step=50):
     )
 
     plt.tight_layout()
+
+    # Save image with same title
+    safe_title = sanitize_filename(plot_title)
+    save_folder = os.path.dirname(csv_file)
+    image_path = os.path.join(save_folder, f"{safe_title}.png")
+    plt.savefig(image_path, dpi=300, bbox_inches="tight")
+
+    print(f"Plot saved as:\n{image_path}")
+
     plt.show()
 
 
 def main():
     try:
         df = load_and_clean_data(csv_file)
-        plot_flight_paths(df, show_connector_lines=True, connector_step=50)
+
+        plot_title = input("Enter plot title: ").strip()
+        if plot_title == "":
+            plot_title = "3D_Flight_Path_Comparison"
+
+        plot_flight_paths(df, plot_title, show_connector_lines=True, connector_step=50)
+
     except Exception as e:
         print(f"ERROR: {e}")
 
